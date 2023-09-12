@@ -10,11 +10,8 @@ import (
 func main() {
 	app := fiber.New()
 
-	//run database
 	configs.ConnectDB()
-
-	//routes
 	routes.PurchaseRoute(app) //add this
 
-	app.Listen(":6000")
+	app.Listen(":8001")
 }

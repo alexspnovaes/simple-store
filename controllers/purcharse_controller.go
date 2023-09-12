@@ -2,10 +2,15 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"math"
 	"net/http"
 	"simple-store-api/configs"
 	"simple-store-api/models"
 	"simple-store-api/responses"
+	"strconv"
 	"time"
 
 	"github.com/go-playground/validator/v10"
@@ -73,4 +78,55 @@ func GetAllPurchases(c *fiber.Ctx) error {
 	return c.Status(http.StatusOK).JSON(
 		responses.DataResponse{Status: http.StatusOK, Message: "success", Data: &fiber.Map{"data": purchases}},
 	)
+}
+
+func GetPurchase(c *fiber.Ctx) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	purchaseId := c.Params("purchaseId")
+	currency := c.Params("currency")
+
+	var purcharse models.Purchase
+	defer cancel()
+
+	objId, _ := primitive.ObjectIDFromHex(purchaseId)
+
+	err := purchaseCollection.FindOne(ctx, bson.M{"id": objId}).Decode(&purcharse)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(responses.DataResponse{Status: http.StatusInternalServerError, Message: "error", Data: &fiber.Map{"data": err.Error()}})
+	}
+
+	purchaseDate := purcharse.Date.Format("2006-01-02")
+	dateBefore := purcharse.Date.AddDate(0, -6, 0).Format("2006-01-02")
+
+	baseUrl := "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v1/accounting/od/rates_of_exchange"
+	filterDate := fmt.Sprintf("?filter=record_date:gte:%s,record_date:lte:%s", dateBefore, purchaseDate)
+	endpoint := fmt.Sprintf("%s%s,currency:eq:%s&sort=-record_date&page[number]=1&page[size]=1", baseUrl, filterDate, currency)
+
+	response, err := http.Get(endpoint)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(responses.DataResponse{Status: http.StatusInternalServerError, Message: "error", Data: &fiber.Map{"data": err.Error()}})
+	}
+
+	responseData, err := io.ReadAll(response.Body)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(responses.DataResponse{Status: http.StatusInternalServerError, Message: "error", Data: &fiber.Map{"data": err.Error()}})
+	}
+
+	var currencyResponse responses.CurrencyResponse
+	json.Unmarshal(responseData, &currencyResponse)
+
+	if len(currencyResponse.Data) == 0 {
+		return c.Status(http.StatusInternalServerError).JSON(responses.DataResponse{Status: http.StatusInternalServerError, Message: "stating the purchase cannot be converted to the target currency."})
+	}
+
+	exchangeRate, err := strconv.ParseFloat(currencyResponse.Data[0].ExchangeRate, 64)
+
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(responses.DataResponse{Status: http.StatusInternalServerError, Message: "error", Data: &fiber.Map{"data": err.Error()}})
+	}
+
+	purcharse.ExchangeRate = math.Round(exchangeRate*100) / 100
+	purcharse.ConvertedAmount = math.Round(exchangeRate*purcharse.Amount*100) / 100
+
+	return c.Status(http.StatusOK).JSON(responses.DataResponse{Status: http.StatusOK, Message: "success", Data: &fiber.Map{"data": purcharse}})
 }

@@ -7,5 +7,7 @@ import (
 )
 
 func PurchaseRoute(app *fiber.App) {
-	app.Post("/user", controllers.NewPurchase) //add thi
+	app.Post("/purcharse", controllers.NewPurchase)
+	app.Get("/purcharse", controllers.GetAllPurchases)
+	app.Get("/purcharse/:purchaseId/currency/:currency", controllers.GetPurchase)
 }
